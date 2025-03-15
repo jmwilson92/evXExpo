@@ -1,0 +1,20 @@
+[debug] [2025-03-14T04:28:52.700Z] ----------------------------------------------------------------------
+[debug] [2025-03-14T04:28:52.701Z] Command:       C:\nvm4w\nodejs\node.exe C:\Users\laugh\AppData\Roaming\npm\node_modules\firebase-tools\lib\bin\firebase.js use --add
+[debug] [2025-03-14T04:28:52.701Z] CLI Version:   13.31.2
+[debug] [2025-03-14T04:28:52.701Z] Platform:      win32
+[debug] [2025-03-14T04:28:52.701Z] Node Version:  v18.20.0
+[debug] [2025-03-14T04:28:52.702Z] Time:          Thu Mar 13 2025 21:28:52 GMT-0700 (Pacific Daylight Time)
+[debug] [2025-03-14T04:28:52.702Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2025-03-14T04:28:52.809Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2025-03-14T04:28:52.810Z] > authorizing via signed-in user (electricevxcharging@gmail.com)
+[debug] [2025-03-14T04:28:52.810Z] Checked if tokens are valid: false, expires at: 1741651611271
+[debug] [2025-03-14T04:28:52.811Z] Checked if tokens are valid: false, expires at: 1741651611271
+[debug] [2025-03-14T04:28:52.811Z] > refreshing access token with scopes: []
+[debug] [2025-03-14T04:28:52.812Z] >>> [apiv2][query] POST https://www.googleapis.com/oauth2/v3/token [none]
+[debug] [2025-03-14T04:28:52.812Z] >>> [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2025-03-14T04:28:53.090Z] <<< [apiv2][status] POST https://www.googleapis.com/oauth2/v3/token 200
+[debug] [2025-03-14T04:28:53.090Z] <<< [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2025-03-14T04:28:53.106Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects pageSize=1000
+[debug] [2025-03-14T04:28:53.658Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects 200
+[debug] [2025-03-14T04:28:53.658Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects [omitted]

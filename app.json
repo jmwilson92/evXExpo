@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "evXExpo",
+    "slug": "evXExpo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "config": {
+        "googleMapsApiKey": "AIzaSyDWRBa2ztOr9jtp6_om9itznjDs-NGm2cM"
+      }
+    },
+    "android": {
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyDWRBa2ztOr9jtp6_om9itznjDs-NGm2cM"
+        }
+      }
+    },
+    "platforms": ["ios", "android"],
+    "web": null 
+  }
+}
