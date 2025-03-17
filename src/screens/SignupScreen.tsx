@@ -34,7 +34,8 @@ export default function SignupScreen({ navigation }: SignupScreenProps) {
           role, // Selected role
         }).then(() => {
           console.log('Signup - User data saved');
-          const route = role === 'Driver' ? 'DriverMapScreen' : 'OwnerDash'; // Owner or Both go to OwnerDash
+          const role = 'Both'; // Example role from signup form
+          const route: "DriverMapScreen" | "OwnerDashScreen" = role === 'Both' ? 'OwnerDashScreen' : 'DriverMapScreen';
           console.log('Signup - Forcing nav to:', route);
           navigation.replace(route);
         });

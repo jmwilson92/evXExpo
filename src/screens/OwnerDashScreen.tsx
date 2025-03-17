@@ -11,11 +11,31 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { doc, setDoc, collection, onSnapshot, getDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
-type OwnerDashScreenNavigationProp = StackNavigationProp<RootStackParamList, 'OwnerDash'>;
+type OwnerDashScreenNavigationProp = StackNavigationProp<RootStackParamList, 'OwnerDashScreen'>;
 
 interface MenuOption { label: string; action: () => void; }
-interface UserData { firstName: string; lastName: string; email: string; phone: string; photo: string | null; role: 'Driver' | 'Owner' | 'Both'; }
-interface StationData { id: string; chargeRate: string; address: string; adapterTypes: string[]; photo: string | null; available: boolean; latitude: number; longitude: number; ownerId: string; }
+interface UserData { 
+  firstName: string; 
+  lastName: string; 
+  email: string; 
+  phone: string; 
+  photo: string | null; 
+  role: 'Driver' | 'Owner' | 'Both'; 
+  walletBalance?: number; 
+}
+interface StationData { 
+  id: string; 
+  chargeRate: string; 
+  address: string; 
+  adapterTypes: string[]; 
+  photo: string | null; 
+  available: boolean; 
+  latitude: number; 
+  longitude: number; 
+  ownerId: string; 
+  chargerLevel?: 'Level 1' | 'Level 2' | 'Level 3'; 
+  networkType?: 'In-net' | 'Out-net'; 
+}
 interface AddressSuggestion { name: string; latitude: number; longitude: number; }
 
 interface MenuModalProps { isVisible: boolean; onClose: () => void; options: MenuOption[]; }
@@ -81,6 +101,8 @@ const ProfileSection: React.FC<ProfileSectionProps> = ({ userData, isEditing, se
 const AddStationModal: React.FC<AddStationModalProps> = ({ isVisible, onClose, stationData, setStationData, onSave }) => {
   const [addressSuggestions, setAddressSuggestions] = useState<AddressSuggestion[]>([]);
   const adapterOptions = ['NACS', 'CCS', 'CHAdeMO'];
+  const chargerLevelOptions = ['Level 1', 'Level 2', 'Level 3'];
+  const networkTypeOptions: ('In-net' | 'Out-net')[] = ['In-net', 'Out-net'];
 
   const handleAddressChange = async (text: string) => {
     setStationData({ ...stationData, address: text });
@@ -116,18 +138,31 @@ const AddStationModal: React.FC<AddStationModalProps> = ({ isVisible, onClose, s
     }
   };
 
+  const selectChargerLevel = (level: 'Level 1' | 'Level 2' | 'Level 3') => {
+    setStationData({ ...stationData, chargerLevel: level });
+  };
+
+  const selectNetworkType = (type: 'In-net' | 'Out-net') => {
+    setStationData({ ...stationData, networkType: type });
+  };
+
   return (
     <Modal isVisible={isVisible} onBackdropPress={onClose} style={styles.centeredModal}>
       <View style={styles.modalContent}>
         <Text style={styles.modalTitle}>Add New Station</Text>
         <TextInput 
           style={styles.input} 
-          placeholder="Charge Rate ($ per minute)" // Updated placeholder
+          placeholder="Charge Rate ($ per minute)"
           value={stationData.chargeRate} 
           onChangeText={(text: string) => setStationData({ ...stationData, chargeRate: text })} 
           keyboardType="numeric" 
         />
-        <TextInput style={styles.input} placeholder="Station Address" value={stationData.address} onChangeText={handleAddressChange} />
+        <TextInput 
+          style={styles.input} 
+          placeholder="Station Address" 
+          value={stationData.address} 
+          onChangeText={handleAddressChange} 
+        />
         {addressSuggestions.length > 0 && (
           <FlatList
             data={addressSuggestions}
@@ -143,8 +178,36 @@ const AddStationModal: React.FC<AddStationModalProps> = ({ isVisible, onClose, s
         <Text style={styles.label}>Adapter Types</Text>
         <View style={styles.adapterContainer}>
           {adapterOptions.map(type => (
-            <TouchableOpacity key={type} style={[styles.adapterButton, stationData.adapterTypes?.includes(type) && styles.adapterButtonSelected]} onPress={() => toggleAdapterType(type)}>
+            <TouchableOpacity 
+              key={type} 
+              style={[styles.adapterButton, stationData.adapterTypes?.includes(type) && styles.adapterButtonSelected]} 
+              onPress={() => toggleAdapterType(type)}
+            >
               <Text style={styles.adapterText}>{type}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.label}>Charger Level</Text>
+        <View style={styles.chargerLevelContainer}>
+          {chargerLevelOptions.map(level => (
+            <TouchableOpacity 
+              key={level} 
+              style={[styles.chargerLevelButton, stationData.chargerLevel === level && styles.chargerLevelButtonSelected]} 
+              onPress={() => selectChargerLevel(level as 'Level 1' | 'Level 2' | 'Level 3')}
+            >
+              <Text style={styles.chargerLevelText}>{level}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.label}>Network Type</Text>
+        <View style={styles.networkTypeContainer}>
+          {networkTypeOptions.map(type => (
+            <TouchableOpacity 
+              key={type} 
+              style={[styles.networkTypeButton, stationData.networkType === type && styles.networkTypeButtonSelected]} 
+              onPress={() => selectNetworkType(type)}
+            >
+              <Text style={styles.networkTypeText}>{type === 'In-net' ? 'In-Network' : 'Out-of-Network'}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -172,49 +235,83 @@ export default function OwnerDashScreen({ navigation }: OwnerDashScreenProps): J
   const [isEditing, setIsEditing] = useState(false);
   const [editedData, setEditedData] = useState<UserData>({} as UserData);
   const [isAddStationModalVisible, setIsAddStationModalVisible] = useState(false);
-  const [stationData, setStationData] = useState<StationData>({ id: '', chargeRate: '', address: '', adapterTypes: [], photo: null, available: true, latitude: 0, longitude: 0, ownerId: '' });
+  const [stationData, setStationData] = useState<StationData>({ 
+    id: '', 
+    chargeRate: '', 
+    address: '', 
+    adapterTypes: [], 
+    photo: null, 
+    available: true, 
+    latitude: 0, 
+    longitude: 0, 
+    ownerId: '',
+    chargerLevel: 'Level 2',
+    networkType: 'In-net',
+  });
   const [stations, setStations] = useState<StationData[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     console.log('OwnerDashScreen mounted');
     let unsubscribeStations: () => void;
-
+    let unsubscribeUser: () => void;
+  
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       console.log('OwnerDash - Auth state check:', user ? user.uid : 'No user');
+      // Unsubscribe existing listeners before setting new ones
+      if (unsubscribeUser) unsubscribeUser();
+      if (unsubscribeStations) unsubscribeStations();
+  
       if (user) {
-        const userRef = doc(db, 'users', user.uid);
-        getDoc(userRef).then(docSnap => {
+        const userRef = db.collection('users').doc(user.uid);
+        unsubscribeUser = onSnapshot(userRef, async (docSnap) => {
           if (docSnap.exists()) {
             const data = docSnap.data() as UserData;
-            console.log('OwnerDash - User role:', data.role);
-            setUserData(data);
+            console.log('OwnerDash - User role:', data.role, 'Wallet Balance:', data.walletBalance);
+            setUserData({ ...data, walletBalance: data.walletBalance || 0 });
             setEditedData(data);
           } else {
-            navigation.navigate('Signup');
+            console.log('OwnerDash - User document does not exist, initializing with default walletBalance');
+            try {
+              await userRef.set({
+                firstName: '',
+                lastName: '',
+                email: user.email || '',
+                phone: '',
+                photo: null,
+                role: 'Owner', // Adjust based on actual role assignment
+                walletBalance: 0,
+              }, { merge: true });
+              setUserData({ firstName: '', lastName: '', email: user.email || '', phone: '', photo: null, role: 'Owner', walletBalance: 0 });
+              setEditedData({ firstName: '', lastName: '', email: user.email || '', phone: '', photo: null, role: 'Owner', walletBalance: 0 });
+              console.log('OwnerDash - User document initialized with walletBalance: 0');
+            } catch (error) {
+              console.error('OwnerDash - Error initializing user document:', error);
+              Alert.alert('Error', 'Failed to initialize user profile: ' + (error instanceof Error ? error.message : 'Unknown error'));
+            }
           }
-        }).catch(error => console.error('Firestore fetch error:', error));
-
+        }, (error) => console.error('User snapshot error:', error));
+  
         unsubscribeStations = onSnapshot(collection(db, 'stations'), (snapshot) => {
           const stationList: StationData[] = snapshot.docs
-            .map(doc => ({ id: doc.id, ...doc.data() } as StationData))
+            .map(doc => ({ id: doc.id, ...doc.data(), status: doc.data().status || 'available' } as unknown as StationData))
             .filter(station => station.ownerId === user.uid);
           setStations(stationList);
         }, (error) => console.error('Stations snapshot error:', error));
-
+  
         setLoading(false);
       } else {
         setUserData(null);
         setLoading(false);
-        if (unsubscribeStations) unsubscribeStations();
         navigation.navigate('Login');
       }
     });
-
+  
     return () => {
       console.log('OwnerDashScreen unmounting');
+      if (unsubscribeUser) unsubscribeUser(); // Clean up user snapshot listener
+      if (unsubscribeStations) unsubscribeStations(); // Clean up stations snapshot listener
       unsubscribeAuth();
-      if (unsubscribeStations) unsubscribeStations();
     };
   }, [navigation]);
 
@@ -274,12 +371,24 @@ export default function OwnerDashScreen({ navigation }: OwnerDashScreenProps): J
           photoURL = await getDownloadURL(storageRef);
           console.log('Photo uploaded:', photoURL);
         }
-        const newStation: StationData = { id: `${user.uid}_${Date.now()}`, chargeRate: stationData.chargeRate, address: stationData.address, adapterTypes: stationData.adapterTypes, photo: photoURL, available: true, latitude: stationData.latitude, longitude: stationData.longitude, ownerId: user.uid };
+        const newStation: StationData = { 
+          id: `${user.uid}_${Date.now()}`, 
+          chargeRate: stationData.chargeRate, 
+          address: stationData.address, 
+          adapterTypes: stationData.adapterTypes, 
+          photo: photoURL, 
+          available: true, 
+          latitude: stationData.latitude, 
+          longitude: stationData.longitude, 
+          ownerId: user.uid,
+          chargerLevel: stationData.chargerLevel || 'Level 2',
+          networkType: stationData.networkType || 'In-net',
+        };
         console.log('Station data to save:', newStation);
         await setDoc(doc(db, 'stations', newStation.id), newStation);
         console.log('Station saved:', newStation.id);
         setStations([...stations, newStation]);
-        setStationData({ id: '', chargeRate: '', address: '', adapterTypes: [], photo: null, available: true, latitude: 0, longitude: 0, ownerId: '' });
+        setStationData({ id: '', chargeRate: '', address: '', adapterTypes: [], photo: null, available: true, latitude: 0, longitude: 0, ownerId: '', chargerLevel: 'Level 2', networkType: 'In-net' });
         setIsAddStationModalVisible(false);
         Alert.alert('Success', 'Station Added!');
       } catch (error) {
@@ -303,35 +412,37 @@ export default function OwnerDashScreen({ navigation }: OwnerDashScreenProps): J
     switch (currentScreen) {
       case 'Profile':
         return <ProfileSection userData={userData} isEditing={isEditing} setIsEditing={setIsEditing} editedData={editedData} setEditedData={setEditedData} onSave={handleSaveProfile} />;
-        case 'Stations':
-          return (
-            <View style={styles.content}>
-              <Text style={styles.sectionTitle}>Stations</Text>
-              {stations.length === 0 ? (
-                <Text style={styles.message}>No stations yet. Add one below!</Text>
-              ) : (
-                <ScrollView>
-                  {stations.map(station => (
-                    <View key={station.id} style={styles.stationItem}>
-                      <Text>{station.address}</Text>
-                      <Text>${station.chargeRate} per minute - {station.adapterTypes.join(', ')}</Text>
-                      <TouchableOpacity onPress={() => toggleStationAvailability(station.id, station.available)}>
-                        <Text>{station.available ? 'Make Unavailable' : 'Make Available'}</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </ScrollView>
-              )}
-              <TouchableOpacity style={styles.actionButton} onPress={() => setIsAddStationModalVisible(true)}>
-                <Text style={styles.buttonText}>Add Station</Text>
-              </TouchableOpacity>
-            </View>
-          );
+      case 'Stations':
+        return (
+          <View style={styles.content}>
+            <Text style={styles.sectionTitle}>Stations</Text>
+            {stations.length === 0 ? (
+              <Text style={styles.message}>No stations yet. Add one below!</Text>
+            ) : (
+              <ScrollView>
+                {stations.map(station => (
+                  <View key={station.id} style={styles.stationItem}>
+                    <Text>{station.address}</Text>
+                    <Text>Charger Level: {station.chargerLevel || 'Not set'}</Text>
+                    <Text>Network Type: {station.networkType === 'In-net' ? 'In-Network' : 'Out-of-Network'}</Text>
+                    <Text>${station.chargeRate} per minute - {station.adapterTypes.join(', ')}</Text>
+                    <TouchableOpacity onPress={() => toggleStationAvailability(station.id, station.available)}>
+                      <Text>{station.available ? 'Make Unavailable' : 'Make Available'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+            <TouchableOpacity style={styles.actionButton} onPress={() => setIsAddStationModalVisible(true)}>
+              <Text style={styles.buttonText}>Add Station</Text>
+            </TouchableOpacity>
+          </View>
+        );
       case 'Wallet':
         return (
           <View style={styles.content}>
             <Text style={styles.sectionTitle}>Wallet</Text>
-            <Text style={styles.cashAmount}>$0.00</Text>
+            <Text style={styles.cashAmount}>${(userData.walletBalance || 0).toFixed(2)}</Text>
             <TouchableOpacity style={styles.actionButton} onPress={() => Alert.alert('Info', 'Cash Out coming soon!')}>
               <Text style={styles.buttonText}>💵 Cash Out</Text>
             </TouchableOpacity>
@@ -419,4 +530,12 @@ const styles = StyleSheet.create({
   adapterButton: { padding: 10, margin: 5, borderWidth: 1, borderColor: '#1E90FF', borderRadius: 5 },
   adapterButtonSelected: { backgroundColor: '#1E90FF' },
   adapterText: { color: '#1E90FF', fontSize: 14 },
+  chargerLevelContainer: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginVertical: 10 },
+  chargerLevelButton: { padding: 10, margin: 5, borderWidth: 1, borderColor: '#1E90FF', borderRadius: 5 },
+  chargerLevelButtonSelected: { backgroundColor: '#1E90FF' },
+  chargerLevelText: { color: '#1E90FF', fontSize: 14 },
+  networkTypeContainer: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginVertical: 10 },
+  networkTypeButton: { padding: 10, margin: 5, borderWidth: 1, borderColor: '#1E90FF', borderRadius: 5 },
+  networkTypeButtonSelected: { backgroundColor: '#1E90FF' },
+  networkTypeText: { color: '#1E90FF', fontSize: 14 },
 });

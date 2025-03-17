@@ -1,120 +1,122 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ImageBackground } from 'react-native'; // Added ImageBackground
+import { View, TextInput, Button, Alert, StyleSheet, ImageBackground, Text, Image, TouchableOpacity } from 'react-native';
+import { StackNavigationProp } from '@react-navigation/stack';
+import { StackActions } from '@react-navigation/native';
+import { RootStackParamList } from '../navigation/AppNavigator';
 import { auth, db } from '../../firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { StackNavigationProp } from '@react-navigation/stack';
-import { RootStackParamList } from '../navigation/AppNavigator';
 
 type LoginScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Login'>;
 
-interface LoginScreenProps {
+interface Props {
   navigation: LoginScreenNavigationProp;
 }
 
-export default function LoginScreen({ navigation }: LoginScreenProps) {
+const LoginScreen = ({ navigation }: Props) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  const handleLogin = async () => {
+  const handleSignIn = async () => {
     console.log('Login - Attempting sign-in with:', email);
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       console.log('Login - Signed in:', userCredential.user.uid);
-      const userRef = doc(db, 'users', userCredential.user.uid);
-      const docSnap = await getDoc(userRef);
-      if (docSnap.exists()) {
+      const userRef = db.collection('users').doc(userCredential.user.uid);
+      const docSnap = await userRef.get();
+      if (docSnap.exists) {
         const data = docSnap.data() as { role: 'Driver' | 'Owner' | 'Both' };
         console.log('Login - User role:', data.role);
-        const route = data.role === 'Both' || data.role === 'Owner' ? 'OwnerDash' : 'DriverMapScreen';
-        console.log('Login - Forcing nav to:', route);
-        navigation.replace(route);
+        const targetScreen = data.role === 'Both' || data.role === 'Owner' ? 'OwnerDashScreen' : 'DriverMapScreen';
+        console.log('Login - Forcing nav to:', targetScreen);
+        navigation.dispatch(StackActions.replace(targetScreen));
       } else {
-        console.log('Login - No user doc, staying on Login');
-        alert('User data not found');
+        navigation.navigate('Signup');
       }
     } catch (error) {
-      console.error('Login - Error:', (error as Error).message);
-      alert((error as Error).message);
+      console.error('Login - Sign-in error:', error);
+      Alert.alert('Error', 'Failed to sign in: ' + (error instanceof Error ? error.message : 'Unknown error'));
     }
   };
 
-  console.log('LoginScreen - Rendering');
   return (
     <ImageBackground source={require('../../assets/logo.png')} style={styles.background}>
-      <View style={styles.container}>
-        <Text style={styles.title}>Login</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="Email"
-          value={email}
-          onChangeText={setEmail}
-          keyboardType="email-address"
-          autoCapitalize="none"
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Password"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-        />
-        <TouchableOpacity style={styles.button} onPress={handleLogin}>
-          <Text style={styles.buttonText}>Log In</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
-          <Text style={styles.link}>Need an account? Sign Up</Text>
-        </TouchableOpacity>
+      <View style={styles.overlay}>
+        <Text style={styles.title}>EVX Login</Text>
+        <View style={styles.inputContainer}>
+          <TextInput
+            style={styles.input}
+            placeholder="Email"
+            value={email}
+            onChangeText={setEmail}
+            autoCapitalize="none"
+            keyboardType="email-address"
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Password"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+          />
+          <Button title="Sign In" onPress={handleSignIn} color="#1E90FF" />
+          <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
+            <Text style={styles.signupLink}>Create an account here</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </ImageBackground>
   );
-}
+};
 
 const styles = StyleSheet.create({
   background: {
     flex: 1,
     width: '100%',
     height: '100%',
-    resizeMode: 'cover',
   },
-  container: {
+  overlay: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)', // Overlay for readability
+    backgroundColor: 'rgba(0, 0, 0, 0.3)', // Semi-transparent overlay for readability
     padding: 20,
   },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 20,
+    color: '#fff',
+    marginBottom: 30,
+    textAlign: 'center',
+  },
+  inputContainer: {
+    width: '80%',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)', // Slightly transparent white background for inputs
+    padding: 20,
+    borderRadius: 10,
+    elevation: 5, // Shadow for Android
+    shadowColor: '#000', // Shadow for iOS
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
   },
   input: {
-    width: '80%',
-    padding: 15,
-    marginVertical: 10,
+    width: '100%',
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 5,
+    marginBottom: 15,
     backgroundColor: '#fff',
-    borderRadius: 10,
-  },
-  button: {
-    backgroundColor: '#1E90FF',
-    paddingVertical: 15,
-    paddingHorizontal: 30,
-    borderRadius: 25,
-    marginTop: 20,
-  },
-  buttonText: {
-    color: '#fff',
+    color: '#000',
     fontSize: 16,
-    fontWeight: 'bold',
   },
-  link: {
-    color: '#1E90FF',
+  signupLink: {
     marginTop: 15,
+    color: '#1E90FF', // Matches the app's primary color
+    fontSize: 16,
+    textAlign: 'center',
+    textDecorationLine: 'underline', // Makes it look like a clickable link
   },
 });
 
-function alert(arg0: string) {
-  throw new Error('Function not implemented.');
-}
+export default LoginScreen;

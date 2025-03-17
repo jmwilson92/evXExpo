@@ -5,9 +5,8 @@ import Modal from 'react-native-modal';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { StackActions } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { auth, db, storage, stripePublishableKey } from '../../firebase';
+import { auth, db, stripePublishableKey } from '../../firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { getDoc, collection, onSnapshot, query, where, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
@@ -15,6 +14,8 @@ import { StripeProvider, useStripe, CardField } from '@stripe/stripe-react-nativ
 import { ListRenderItem } from 'react-native';
 import debounce from 'lodash/debounce';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import firebase from 'firebase/compat';
+import { collection, getDoc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 
 type DriverMapScreenNavigationProp = StackNavigationProp<RootStackParamList, 'DriverMapScreen'>;
 
@@ -23,6 +24,7 @@ interface DriverMapScreenProps {
 }
 
 interface UserData {
+  walletBalance: number;
   firstName: string;
   lastName: string;
   email: string;
@@ -33,6 +35,7 @@ interface UserData {
 }
 
 interface StationData {
+  networkType: string;
   id: string;
   chargeRate: string;
   address: string;
@@ -524,10 +527,10 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
   const handleSignOutCallback = useCallback(() => handleSignOut(), []);
   const handleOwnerDashNavigation = useCallback(() => {
     logToFile('menuOptions - Navigating to OwnerDashScreen');
-    navigation.dispatch(StackActions.replace('OwnerDashScreen'));
+    navigation.dispatch(StackActions.replace('OwnerDashScreen')); // Correct
     logToFile('menuOptions - Navigation dispatched');
-  }, [navigation]);
-
+  }, [navigation])
+  
   const menuOptions = useMemo(() => {
     logToFile(`menuOptions - Generating menu options with userData: ${JSON.stringify(userData)}`);
     const baseOptions: MenuOption[] = [
@@ -536,14 +539,14 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
       { label: 'Charges', action: () => setCurrentScreenCallback('Charges') },
       { label: 'Sign Out', action: handleSignOutCallback },
     ];
-
+  
     if (userData?.role === 'Both') {
       baseOptions.splice(3, 0, {
         label: 'Owner Dash',
         action: handleOwnerDashNavigation,
       });
     }
-
+  
     logToFile(`menuOptions - Generated options: ${JSON.stringify(baseOptions.map(opt => opt.label))}`);
     return baseOptions;
   }, [userData?.role, setCurrentScreenCallback, handleSignOutCallback, handleOwnerDashNavigation]);
@@ -551,9 +554,8 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
   // Main setup effect for location and auth
   useEffect(() => {
     let locationSubscription: Location.LocationSubscription | null = null;
-    let isAuthResolved = false; // Track if auth state is resolved
   
-    logToFile('DriverMap - useEffect triggered'); // Debug log
+    logToFile('DriverMap - useEffect triggered for auth and location'); // Debug log
   
     const setup = async () => {
       logToFile('DriverMap - setup function started'); // Debug log
@@ -561,16 +563,54 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
       // Check for persisted login state
       const isLoggedIn = await AsyncStorage.getItem('isLoggedIn');
       logToFile(`DriverMap - Persisted login state: ${isLoggedIn}`); // Debug log
-      if (isLoggedIn !== 'true') {
+      if (isLoggedIn === 'true') {
+        logToFile('DriverMap - Persisted login detected, waiting for auth');
+      } else {
         logToFile('DriverMap - No persisted login, waiting for auth state');
       }
   
-      logToFile('DriverMap - Setting up - Starting setup');
+      // Ensure Firebase auth is initialized
+      logToFile('DriverMap - Initializing Firebase auth state'); // Debug log
+      const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+        logToFile('DriverMap - Auth state check: ' + (user ? user.uid : 'No user')); // Debug log
+        if (isMounted.current) {
+          if (user) {
+            await AsyncStorage.setItem('isLoggedIn', 'true'); // Persist login state
+            const userRef = db.collection('users').doc(user.uid);
+            try {
+              const docSnap = await getDoc(userRef);
+              if (docSnap.exists() && isMounted.current) {
+                const data = docSnap.data() as UserData;
+                logToFile('DriverMap - User role: ' + data.role);
+                setUserData(data);
+                setEditedData(data);
+              } else {
+                logToFile('DriverMap - No user doc, to Signup');
+                if (isMounted.current) navigation.navigate('Signup');
+              }
+            } catch (error) {
+              logToFile('DriverMap - Firestore fetch error: ' + (error instanceof Error ? error.message : 'Unknown error'));
+            } finally {
+              if (isMounted.current) setLoading(false);
+            }
+          } else {
+            await AsyncStorage.removeItem('isLoggedIn'); // Clear persisted login state
+            setUserData(null);
+            setPastCharges([]);
+            if (isMounted.current) {
+              setLoading(false);
+              navigation.navigate('Login');
+            }
+          }
+        }
+      });
+  
+      // Set up location services
+      logToFile('DriverMap - Setting up location services'); // Debug log
       let { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
         logToFile('DriverMap - Location permission denied');
         if (isMounted.current) setLoading(false);
-        isAuthResolved = true;
         return;
       }
   
@@ -592,51 +632,6 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
         }
       );
   
-      const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-        logToFile('DriverMap - Auth state check: ' + (user ? user.uid : 'No user')); // Debug log
-        if (isMounted.current) {
-          if (user) {
-            AsyncStorage.setItem('isLoggedIn', 'true'); // Persist login state
-            const userRef = db.collection('users').doc(user.uid);
-            getDoc(userRef).then(docSnap => {
-              if (docSnap.exists() && isMounted.current) {
-                const data = docSnap.data() as UserData;
-                logToFile('DriverMap - User role: ' + data.role);
-                setUserData(data);
-                setEditedData(data);
-              } else {
-                logToFile('DriverMap - No user doc, to Signup');
-                if (isMounted.current) navigation.navigate('Signup');
-              }
-              if (isMounted.current) {
-                setLoading(false); // Stop loading after auth resolution
-                isAuthResolved = true;
-              }
-            }).catch(error => {
-              logToFile('DriverMap - Firestore fetch error: ' + error.message);
-              if (isMounted.current) {
-                setLoading(false);
-                isAuthResolved = true;
-              }
-            });
-          } else {
-            AsyncStorage.removeItem('isLoggedIn'); // Clear persisted login state
-            setUserData(null);
-            setPastCharges([]);
-            if (isMounted.current) {
-              setLoading(false);
-              navigation.navigate('Login');
-              isAuthResolved = true;
-            }
-          }
-        }
-      });
-  
-      // Keep loading until auth is resolved
-      while (!isAuthResolved && isMounted.current) {
-        await new Promise<void>(resolve => setTimeout(() => resolve(), 100)); // Fix: Wrap resolve in a no-arg function
-      }
-  
       return () => {
         logToFile('DriverMap - Cleanup');
         isMounted.current = false;
@@ -647,7 +642,10 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
       };
     };
   
-    setup();
+    setup().catch(error => {
+      logToFile('DriverMap - Setup error: ' + (error instanceof Error ? error.message : 'Unknown error'));
+      if (isMounted.current) setLoading(false);
+    });
   }, [navigation]);
   
   // Listener setup effect for Firestore subscriptions
@@ -658,17 +656,17 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
       if (unsubscribeRefs.current.charges) unsubscribeRefs.current.charges();
   
       const chargesQuery = query(collection(db, 'charges'), where('driverId', '==', userData?.email || ''));
-      unsubscribeRefs.current.charges = onSnapshot(chargesQuery, (snapshot) => {
+      unsubscribeRefs.current.charges = onSnapshot(chargesQuery, (snapshot: { docs: any[] }) => {
         if (!listenerEnabled || !isMounted.current || isUpdatingState) {
           logToFile('DriverMap - Charges listener skipped due to listenerEnabled: false, unmounted, or updating state');
           return;
         }
-        const chargeList: ChargeSession[] = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
+        const chargeList: ChargeSession[] = snapshot.docs.map((doc: { id: any; data: () => ChargeSession }) => ({
+          ...doc.data(), // Spread first
+          id: doc.id,    // Set id explicitly after to override any existing id field
         } as ChargeSession));
         setPastCharges(chargeList);
-      }, (error) => logToFile('DriverMap - Charges snapshot error: ' + error.message));
+      }, (error: { message: string }) => logToFile('DriverMap - Charges snapshot error: ' + error.message));
   
       unsubscribeRefs.current.stations = onSnapshot(collection(db, 'stations'), (snapshot) => {
         if (!listenerEnabled || !isMounted.current || isUpdatingState) {
@@ -676,8 +674,8 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
           return;
         }
         const stationList: StationData[] = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
+          ...doc.data(), // Spread first
+          id: doc.id,    // Set id explicitly after
           status: doc.data().status || 'available',
         } as StationData));
         setStations(stationList);
@@ -902,7 +900,7 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
       Alert.alert('Error', 'Missing required data');
       return;
     }
-
+  
     const chargingCount = stations.filter(s => s.status === 'charging' && s.driverId === userData.email).length;
     logToFile(`startCharge - Charging count: ${chargingCount}`);
     if (chargingCount > 0) {
@@ -910,7 +908,7 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
       Alert.alert('Busy', 'You’re already charging at another station.');
       return;
     }
-
+  
     const distance = calculateDistance(
       userLocation.latitude,
       userLocation.longitude,
@@ -923,7 +921,7 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
       Alert.alert('Too Far', 'You must be within 0.5 miles to start charging.');
       return;
     }
-
+  
     if (!userData.stripeToken) {
       logToFile('startCharge - Debug: No stripeToken, showing alert');
       Alert.alert(
@@ -935,7 +933,7 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
       );
       return;
     }
-
+  
     try {
       logToFile('startCharge - Unsubscribing Firestore listeners');
       if (unsubscribeRefs.current.stations) unsubscribeRefs.current.stations();
@@ -943,7 +941,7 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
       setIsUpdatingState(true);
       logToFile('startCharge - Setting isUpdating to true');
       setIsUpdating(true);
-
+  
       logToFile('startCharge - Proceeding with charge, station: ' + selectedStation.id);
       const stationRef = db.collection('stations').doc(selectedStation.id);
       logToFile('startCharge - Station ref path: ' + stationRef.path);
@@ -952,7 +950,7 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
         available: false,
       });
       logToFile('startCharge - Station updated to charging');
-
+  
       const session: ChargeSession = {
         id: `${userData.email}_${Date.now()}`,
         stationId: selectedStation.id,
@@ -964,14 +962,14 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
       logToFile('startCharge - Charge ref path: ' + chargeRef.path);
       await chargeRef.set(session);
       logToFile('startCharge - Charge session set in Firestore: ' + JSON.stringify(session));
-
+  
       logToFile('startCharge - Updating state with chargeSession and currentScreen');
       setAppStateSafe(prev => ({
         ...prev,
         chargeSession: session,
         currentScreen: 'Charges',
       }));
-
+  
       logToFile('startCharge - State update dispatched, re-subscribing listeners after delay');
       setTimeout(() => {
         logToFile('startCharge - Re-subscribing Firestore listeners');
@@ -980,26 +978,26 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
             collection(db, 'charges'),
             where('driverId', '==', userData?.email || '')
           );
-          unsubscribeRefs.current.charges = onSnapshot(chargesQuery, (snapshot) => {
+          unsubscribeRefs.current.charges = onSnapshot(chargesQuery, (snapshot: { docs: any[] }) => {
             if (!listenerEnabled || !isMounted.current || isUpdatingState) {
               logToFile('DriverMap - Charges listener skipped due to listenerEnabled: false, unmounted, or updating state');
               return;
             }
-            const chargeList: ChargeSession[] = snapshot.docs.map(doc => ({
-              id: doc.id,
-              ...doc.data(),
+            const chargeList: ChargeSession[] = snapshot.docs.map((doc: { id: any; data: () => ChargeSession }) => ({
+              ...doc.data(), // Spread first
+              id: doc.id,    // Set id explicitly after
             } as ChargeSession));
             setPastCharges(chargeList);
-          }, (error) => logToFile('DriverMap - Charges snapshot error: ' + error.message));
-
+          }, (error: { message: string }) => logToFile('DriverMap - Charges snapshot error: ' + error.message));
+  
           unsubscribeRefs.current.stations = onSnapshot(collection(db, 'stations'), (snapshot) => {
             if (!listenerEnabled || !isMounted.current || isUpdatingState) {
               logToFile('DriverMap - Stations listener skipped due to listenerEnabled: false, unmounted, or updating state');
               return;
             }
             const stationList: StationData[] = snapshot.docs.map(doc => ({
-              id: doc.id,
-              ...doc.data(),
+              ...doc.data(), // Spread first
+              id: doc.id,    // Set id explicitly after
               status: doc.data().status || 'available',
             } as StationData));
             setStations(stationList);
@@ -1021,26 +1019,26 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
           collection(db, 'charges'),
           where('driverId', '==', userData?.email || '')
         );
-        unsubscribeRefs.current.charges = onSnapshot(chargesQuery, (snapshot) => {
+        unsubscribeRefs.current.charges = onSnapshot(chargesQuery, (snapshot: { docs: any[] }) => {
           if (!listenerEnabled || !isMounted.current || isUpdatingState) {
             logToFile('DriverMap - Charges listener skipped due to listenerEnabled: false, unmounted, or updating state');
             return;
           }
-          const chargeList: ChargeSession[] = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
+          const chargeList: ChargeSession[] = snapshot.docs.map((doc: { id: any; data: () => ChargeSession }) => ({
+            ...doc.data(), // Spread first
+            id: doc.id,    // Set id explicitly after
           } as ChargeSession));
           setPastCharges(chargeList);
-        }, (error) => logToFile('DriverMap - Charges snapshot error: ' + error.message));
-
+        }, (error: { message: string }) => logToFile('DriverMap - Charges snapshot error: ' + error.message));
+  
         unsubscribeRefs.current.stations = onSnapshot(collection(db, 'stations'), (snapshot) => {
           if (!listenerEnabled || !isMounted.current || isUpdatingState) {
             logToFile('DriverMap - Stations listener skipped due to listenerEnabled: false, unmounted, or updating state');
             return;
           }
           const stationList: StationData[] = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
+            ...doc.data(), // Spread first
+            id: doc.id,    // Set id explicitly after
             status: doc.data().status || 'available',
           } as StationData));
           setStations(stationList);
@@ -1104,100 +1102,75 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
   };
 
   const endCharge = async () => {
-    logToFile('endCharge - Starting end charge process');
-    if (!selectedStation || !chargeSession || !userData) {
-      logToFile('endCharge - Missing data: ' + JSON.stringify({ selectedStation, chargeSession, userData }));
-      Alert.alert('Error', 'Cannot end charge—missing data. Try again.');
+    if (!chargeSession || !selectedStation) {
+      logToFile('endCharge - Missing chargeSession or selectedStation');
+      Alert.alert('Error', 'No active charge session');
       return;
     }
-    const endTime = Date.now();
-    const minutes = (endTime - chargeSession.startTime) / (1000 * 60);
-    const rate = parseFloat(selectedStation.chargeRate);
-    const totalCost = minutes * rate;
-
+  
+    if (selectedStation.networkType === 'Out-net') {
+      logToFile('endCharge - Out-of-network charger, no payment flow to end');
+      Alert.alert('Info', 'This is an out-of-network charger. Payment is handled externally.');
+      setChargeSession(null);
+      return;
+    }
+  
     try {
       setIsUpdatingState(true);
-      logToFile('endCharge - Updating station to available');
-      const stationRef = db.collection('stations').doc(selectedStation.id);
-      logToFile('endCharge - Station ref path: ' + stationRef.path);
-      await stationRef.update({
-        status: 'available',
-        available: true,
-        driverId: null,
-        enRouteTime: null,
-      });
-
-      logToFile('endCharge - Updating charge session');
+      const endTime = Date.now();
+      const duration = (endTime - chargeSession.startTime) / (1000 * 60); // Duration in minutes
+      const totalCost = duration * parseFloat(selectedStation.chargeRate);
+      const ownerShare = totalCost * 0.95; // 95% to owner
+      const platformShare = totalCost * 0.05; // 5% to platform
+  
+      logToFile(`endCharge - Charge details: duration=${duration} min, totalCost=$${totalCost.toFixed(2)}, ownerShare=$${ownerShare.toFixed(2)}, platformShare=$${platformShare.toFixed(2)}`);
+  
+      // Update charge session with total cost
       const chargeRef = db.collection('charges').doc(chargeSession.id);
-      logToFile('endCharge - Charge ref path: ' + chargeRef.path);
-      await chargeRef.update({
-        endTime,
-        totalCost,
-        status: 'completed',
-      });
-
-      logToFile('endCharge - Showing charge complete alert');
-      Alert.alert('Charge Complete', `Total Cost: $${totalCost.toFixed(2)} for ${minutes.toFixed(2)} minutes`);
-      setAppStateSafe(prev => ({
-        ...prev,
-        chargeSession: null,
-        selectedStation: null,
-        currentScreen: 'Map',
-        hasShownProximityDialog: false,
-        hasShownEndChargeDialog: false,
-      }));
-    } catch (error: unknown) {
-      logToFile('endCharge - Error: ' + (error instanceof Error ? error.message : 'Unknown error'));
-      Alert.alert('Error', `Failed to end charge: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setIsUpdatingState(false);
-    }
-  };
-
-  const handleSaveProfile = async () => {
-    logToFile('handleSaveProfile - Starting save profile');
-    const user = auth.currentUser;
-    if (user) {
-      setIsUpdatingState(true);
-      logToFile('handleSaveProfile - Saving profile for: ' + user.uid);
-      await db.collection('users').doc(user.uid).set(editedData, { merge: true });
-      setUserData(editedData);
-      setIsEditing(false);
-      Alert.alert('Success', 'Profile Updated!');
-      setIsUpdatingState(false);
-    }
-  };
-
-  const handleUploadPhoto = async () => {
-    logToFile('handleUploadPhoto - Starting photo upload');
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      logToFile('handleUploadPhoto - Permission denied for photos');
-      Alert.alert('Permission Denied', 'We need permission to access your photos.');
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 1,
-    });
-
-    if (!result.canceled && result.assets && result.assets.length > 0) {
-      setIsUpdatingState(true);
-      const uri = result.assets[0].uri;
-      const user = auth.currentUser;
-      if (user) {
-        logToFile('handleUploadPhoto - Uploading photo for user: ' + user.uid);
-        const photoRef = ref(storage, `profile_photos/${user.uid}`);
-        const response = await fetch(uri);
-        const blob = await response.blob();
-        await uploadBytes(photoRef, blob);
-        const photoURL = await getDownloadURL(photoRef);
-        setEditedData({ ...editedData, photo: photoURL });
-        logToFile('handleUploadPhoto - Photo uploaded: ' + photoURL);
+      await chargeRef.update({ endTime, totalCost });
+      logToFile(`endCharge - Charge session ${chargeSession.id} updated with totalCost: $${totalCost.toFixed(2)}`);
+  
+      // Update station status
+      const stationRef = db.collection('stations').doc(selectedStation.id);
+      await stationRef.update({ status: 'available', driverId: null });
+      setStations((prev: any[]) => prev.map((s: { id: string; }) => s.id === selectedStation.id ? { ...s, status: 'available', driverId: null } : s));
+      logToFile(`endCharge - Station ${selectedStation.id} status updated to available`);
+  
+      // Update owner's wallet balance
+      const ownerRef = db.collection('users').doc(selectedStation.ownerId);
+      const ownerSnap = await ownerRef.get();
+      if (ownerSnap.exists) {
+        const ownerData = ownerSnap.data() as UserData;
+        const currentBalance = ownerData.walletBalance || 0;
+        const newBalance = currentBalance + ownerShare;
+        await ownerRef.update({ walletBalance: newBalance });
+        logToFile(`endCharge - Updated owner ${selectedStation.ownerId} wallet: Old=$${currentBalance.toFixed(2)}, New=$${newBalance.toFixed(2)}`);
+      } else {
+        logToFile(`endCharge - Owner ${selectedStation.ownerId} not found, creating new entry with initial balance`);
+        await ownerRef.set({
+          walletBalance: ownerShare,
+          role: 'Owner', // Add minimal required fields for the owner
+          email: `owner_${selectedStation.ownerId}@example.com`, // Placeholder, adjust as needed
+        }, { merge: true });
+        logToFile(`endCharge - Created owner ${selectedStation.ownerId} wallet with $${ownerShare.toFixed(2)}`);
       }
+  
+      // Store platform's share in platform_earnings collection
+      const platformEarningRef = db.collection('platform_earnings').doc(`${chargeSession.id}_platform`);
+      await platformEarningRef.set({
+        chargeId: chargeSession.id,
+        amount: platformShare,
+        timestamp: endTime,
+      });
+      logToFile(`endCharge - Platform share recorded: $${platformShare.toFixed(2)} for charge ${chargeSession.id}`);
+  
+      setChargeSession(null);
+      logToFile('endCharge - Charge session ended: ' + chargeSession.id + ', Total cost: $' + totalCost.toFixed(2));
+      Alert.alert('Charge Ended', `Total cost: $${totalCost.toFixed(2)}`);
+    } catch (error) {
+      logToFile('endCharge - Error: ' + (error instanceof Error ? error.message : 'Unknown error'));
+      Alert.alert('Error', 'Failed to end charge: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    } finally {
       setIsUpdatingState(false);
     }
   };
@@ -1408,6 +1381,14 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
     switch (currentScreen) {
       case 'Profile':
         logToFile('renderScreen - Rendering Profile section');
+        function handleSaveProfile(): void {
+          throw new Error('Function not implemented.');
+        }
+
+        function handleUploadPhoto(): void {
+          throw new Error('Function not implemented.');
+        }
+
         return (
           <ErrorBoundary>
             <ProfileSection
@@ -1480,7 +1461,7 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
                 <View style={styles.chargeControl}>
                   <Text style={styles.chargeCardText}>Charging at: ${selectedStation.address}</Text>
                   <Text style={styles.chargeCardText}>Rate: ${selectedStation.chargeRate}/min</Text>
-                  <Text style={styles.chargeCardText}>Started: ${new Date(chargeSession.startTime).toLocaleTimeString()}</Text>
+                  <Text style={styles.chargeCardText}>Started: {new Date(chargeSession.startTime).toLocaleTimeString()}</Text>
                   <TouchableOpacity style={styles.actionButton} onPress={endCharge}>
                     <Text style={styles.buttonText}>End Charge</Text>
                   </TouchableOpacity>
@@ -1726,14 +1707,14 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
   }, [currentScreen, chargeSession, selectedStation, userData, isEditing, editedData, totalSpent, pastCharges, sortedStations, filterType, rangeFilter, chargerLevelFilter, networkFilter]);
   
   logToFile('DriverMapScreen - Render cycle start, loading: ' + loading + ', userLocation: ' + !!userLocation);
-  if (loading || !userLocation) {
-    logToFile('DriverMapScreen - Loading or no userLocation, rendering loading view');
-    return (
-      <View style={styles.loadingContainer}>
-        <Text>Loading...</Text>
-      </View>
-    );
-  }
+if (loading || !userLocation) {
+  logToFile('DriverMapScreen - Loading or no userLocation, rendering loading view');
+  return (
+    <View style={styles.loadingContainer}>
+      <Text>Loading...</Text>
+    </View>
+  );
+}
   
     return (
       <StripeProvider publishableKey={stripePublishableKey}>
@@ -2187,3 +2168,12 @@ export default function DriverMapScreen({ navigation }: DriverMapScreenProps) {
       marginBottom: 10,
     },
   });
+
+function doc(db: firebase.firestore.Firestore, arg1: string, id: string) {
+  throw new Error('Function not implemented.');
+}
+
+
+function Ascynchronous(arg0: () => number) {
+  throw new Error('Function not implemented.');
+}
